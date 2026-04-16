@@ -1243,5 +1243,43 @@ TEST_F(ExecutorUtilsTest, DequantizeLogitsInt8) {
   }
 }
 
+TEST(ExecutorUtilsQuantizeTest, QuantizeInt16) {
+  EXPECT_EQ(Quantize<int16_t>(10.0f, 2.0f, 5), 10);
+  EXPECT_EQ(Quantize<int16_t>(9.0f, 2.0f, 5), 10);
+  EXPECT_EQ(Quantize<int16_t>(-9.0f, 2.0f, 5), 0);
+  EXPECT_EQ(Quantize<int16_t>(100000.0f, 1.0f, 0), 32767);
+  EXPECT_EQ(Quantize<int16_t>(-100000.0f, 1.0f, 0), -32768);
+}
+
+TEST(ExecutorUtilsQuantizeTest, QuantizeInt8) {
+  EXPECT_EQ(Quantize<int8_t>(10.0f, 2.0f, 5), 10);
+  EXPECT_EQ(Quantize<int8_t>(9.0f, 2.0f, 5), 10);
+  EXPECT_EQ(Quantize<int8_t>(-9.0f, 2.0f, 5), 0);
+  EXPECT_EQ(Quantize<int8_t>(1000.0f, 1.0f, 0), 127);
+  EXPECT_EQ(Quantize<int8_t>(-1000.0f, 1.0f, 0), -128);
+}
+
+TEST(ExecutorUtilsFormatFirstNTest, FormatFirstNEmpty) {
+  std::vector<int> empty;
+  EXPECT_EQ(FormatFirstN<int>(empty), "[]");
+}
+
+TEST(ExecutorUtilsFormatFirstNTest, FormatFirstNLessOrEqualThanLimit) {
+  std::vector<int> data = {1, 2, 3, 4, 5};
+  EXPECT_EQ(FormatFirstN<int>(data, 5), "[1, 2, 3, 4, 5]");
+  EXPECT_EQ(FormatFirstN<int>(data, 10), "[1, 2, 3, 4, 5]");
+}
+
+TEST(ExecutorUtilsFormatFirstNTest, FormatFirstNMoreThanLimit) {
+  std::vector<int> data = {1, 2, 3, 4, 5, 6};
+  EXPECT_EQ(FormatFirstN<int>(data, 3), "[1, 2, 3, ...]");
+  EXPECT_EQ(FormatFirstN<int>(data, 5), "[1, 2, 3, 4, 5, ...]");
+}
+
+TEST(ExecutorUtilsFormatFirstNTest, FormatFirstNFloat) {
+  std::vector<float> data = {1.5f, 2.5f, 3.5f};
+  EXPECT_EQ(FormatFirstN<float>(data, 2), "[1.5, 2.5, ...]");
+}
+
 }  // namespace
 }  // namespace litert::lm

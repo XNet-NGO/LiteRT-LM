@@ -63,7 +63,8 @@ absl::Status EmbeddingLookupText::LookupInternal(int token,
   // The input tensor size was verified when the model was loaded.
   input_buffers_[0].Write(absl::MakeSpan(const_cast<const int*>(&token), 1));
 
-  compiled_model_->Run(signature_key_.value(), input_buffers_, output_buffers_);
+  LITERT_RETURN_IF_ERROR(compiled_model_->Run(signature_key_.value(),
+                                              input_buffers_, output_buffers_));
 
   LITERT_ASSIGN_OR_RETURN(auto output_buffer_size, output_buffers_[0].Size());
 

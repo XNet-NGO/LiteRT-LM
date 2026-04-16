@@ -329,6 +329,8 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       InferenceContext cache_update_inference_context,
       SortedPrefillSignatureMap prefill_signature_map,
       std::unique_ptr<EmbeddingLookupManager> embedding_lookup_manager,
+      std::unique_ptr<EmbeddingLookupManager>
+          per_layer_embedding_lookup_manager,
       std::optional<EmbedderPerLayerContext> embedder_per_layer_context,
       LogitsQuantizationParams quantization_params,
       std::vector<const uint8_t*> ple_table_ptrs = {},
@@ -350,6 +352,8 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
         rope_context_(std::move(rope_context)),
         llm_compiled_model_(std::move(llm_compiled_model)),
         embedding_lookup_manager_(std::move(embedding_lookup_manager)),
+        per_layer_embedding_lookup_manager_(
+            std::move(per_layer_embedding_lookup_manager)),
         embedder_per_layer_context_(std::move(embedder_per_layer_context)),
         llm_inference_context_(std::move(llm_inference_context)),
         cache_update_inference_context_(
@@ -396,6 +400,18 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
   // with a certain length.
   absl::Status PrefillInternal(absl::string_view prefill_signature,
                                absl::Span<const int> ids);
+
+  // Prefill internal implementation using embeddings as input.
+  absl::Status PrefillInternalFromEmbeddings(
+      absl::string_view prefill_signature,
+      absl::Span<const int32_t> sliced_tokens,
+      absl::Span<const float> embeddings,
+      absl::Span<const float> ple_embeddings,
+      absl::Span<const int32_t> seq_positions);
+
+  // Runs the common downstream prefill pipeline (RoPE, Masking, LLM execution,
+  // and KV Cache updates) using the pre-populated active buffers.
+  absl::Status PrefillCommonPipeline(absl::string_view prefill_signature);
 
   // Decode internal implementation. Uses the specified 'token' as the input
   // token and uses the specified 'step' as the current time step.  The
@@ -641,6 +657,7 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
   InferenceContext rope_context_;
   ::litert::CompiledModel llm_compiled_model_;
   std::unique_ptr<EmbeddingLookupManager> embedding_lookup_manager_;
+  std::unique_ptr<EmbeddingLookupManager> per_layer_embedding_lookup_manager_;
   std::optional<EmbedderPerLayerContext> embedder_per_layer_context_;
   InferenceContext llm_inference_context_;
   InferenceContext cache_update_inference_context_;

@@ -79,6 +79,8 @@ using ::litert::Environment;
 using ::litert::Model;
 using ::litert::TensorBuffer;
 
+constexpr int kInvalidTokenId = -1;
+
 constexpr char kPrefillSignature[] = "prefill_128";
 constexpr int kPrefillSize = 128;
 constexpr char kDecodeSignature[] = "decode";
@@ -239,6 +241,99 @@ absl::Status SetFirstElement(::litert::TensorBuffer& buffer, int32_t value) {
       ::litert::TensorBufferScopedLock::Create(
           buffer, ::litert::TensorBuffer::LockMode::kWrite));
   static_cast<int32_t*>(lock_and_addr.second)[0] = value;
+  return absl::OkStatus();
+}
+
+absl::Status WritePleEmbeddings(::litert::TensorBuffer& buffer,
+                                absl::Span<const float> ple_embeddings,
+                                litert::ElementType output_type,
+                                float final_scale, int32_t final_zero_point) {
+  if (output_type == litert::ElementType::Int16) {
+    LITERT_ASSIGN_OR_RETURN(
+        auto lock, ::litert::TensorBufferScopedLock::Create(
+                       buffer, ::litert::TensorBuffer::LockMode::kWrite));
+    int16_t* int16_ptr = static_cast<int16_t*>(lock.second);
+    for (size_t i = 0; i < ple_embeddings.size(); ++i) {
+      int16_ptr[i] =
+          Quantize<int16_t>(ple_embeddings[i], final_scale, final_zero_point);
+    }
+  } else if (output_type == litert::ElementType::Float32 ||
+             output_type == litert::ElementType::None) {
+    // Float32 or unquantized path.
+    LITERT_RETURN_IF_ERROR(buffer.Write(ple_embeddings));
+  } else {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Unsupported PLE output type: ", output_type));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status WriteAndPadPleEmbeddings(::litert::TensorBuffer& buffer,
+                                      absl::Span<const float> ple_embeddings,
+                                      size_t ple_dim, size_t seq_pos_size,
+                                      const std::vector<float>& default_ple_emb,
+                                      litert::ElementType output_type,
+                                      float final_scale,
+                                      int32_t final_zero_point) {
+  LITERT_ASSIGN_OR_RETURN(size_t buffer_size, buffer.PackedSize());
+  LITERT_ASSIGN_OR_RETURN(
+      auto lock_and_addr,
+      ::litert::TensorBufferScopedLock::Create(
+          buffer, ::litert::TensorBuffer::LockMode::kWrite));
+
+  size_t num_tokens_to_fill =
+      buffer_size /
+      (ple_dim * (output_type == litert::ElementType::Int16 ? sizeof(int16_t)
+                                                            : sizeof(float)));
+
+  if (output_type == litert::ElementType::Int16) {
+    int16_t* int16_ptr = static_cast<int16_t*>(lock_and_addr.second);
+
+    // Write actual embeddings quantized
+    for (size_t i = 0; i < ple_embeddings.size(); ++i) {
+      int16_ptr[i] =
+          Quantize<int16_t>(ple_embeddings[i], final_scale, final_zero_point);
+    }
+
+    // Quantize default PLE embedding
+    std::vector<int16_t> quantized_default_ple_emb(default_ple_emb.size(), 0);
+    if (default_ple_emb.size() == ple_dim) {
+      for (size_t i = 0; i < ple_dim; ++i) {
+        quantized_default_ple_emb[i] = Quantize<int16_t>(
+            default_ple_emb[i], final_scale, final_zero_point);
+      }
+    }
+
+    // Pad the rest
+    int16_t* padding_ptr = int16_ptr + seq_pos_size * ple_dim;
+    for (size_t i = seq_pos_size; i < num_tokens_to_fill; ++i) {
+      std::memcpy(padding_ptr, quantized_default_ple_emb.data(),
+                  ple_dim * sizeof(int16_t));
+      padding_ptr += ple_dim;
+    }
+  } else if (output_type == litert::ElementType::Float32 ||
+             output_type == litert::ElementType::None) {
+    // Float32 path
+    float* float_ptr = static_cast<float*>(lock_and_addr.second);
+    std::memcpy(float_ptr, ple_embeddings.data(),
+                ple_embeddings.size() * sizeof(float));
+
+    float* padding_ptr = float_ptr + seq_pos_size * ple_dim;
+    if (default_ple_emb.size() == ple_dim) {
+      for (size_t i = seq_pos_size; i < num_tokens_to_fill; ++i) {
+        std::memcpy(padding_ptr, default_ple_emb.data(),
+                    ple_dim * sizeof(float));
+        padding_ptr += ple_dim;
+      }
+    } else {
+      std::memset(
+          padding_ptr, 0,
+          (num_tokens_to_fill - seq_pos_size) * ple_dim * sizeof(float));
+    }
+  } else {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Unsupported PLE output type: ", output_type));
+  }
   return absl::OkStatus();
 }
 
@@ -1933,6 +2028,10 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::PrefillInternal(
       processed_input_tokens.push_back(ids[i]);
     }
     processed_tokens_.AddProcessedTokens(processed_input_tokens);
+    if (!processed_input_tokens.empty()) {
+      NPU_EXECUTOR_LOG(INFO)
+          << "Prefill tokens: " << FormatFirstN<int>(processed_input_tokens);
+    }
 
     auto end_prepare_inputs = absl::Now();
     latency_stats_.prefill_prepare_input_latency_us +=
@@ -2022,6 +2121,178 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::PrefillInternal(
         absl::ToInt64Microseconds(absl::Now() - start);
   }
 
+  return PrefillCommonPipeline(prefill_signature);
+}
+
+absl::Status LlmLiteRtNpuCompiledModelExecutor::PrefillInternalFromEmbeddings(
+    absl::string_view prefill_signature,
+    absl::Span<const int32_t> sliced_tokens, absl::Span<const float> embeddings,
+    absl::Span<const float> ple_embeddings,
+    absl::Span<const int32_t> seq_positions) {
+  NPU_EXECUTOR_LOG(INFO) << "PrefillInternalFromEmbeddings called";
+  NPU_EXECUTOR_LOG(INFO) << "PLE config: type="
+                         << static_cast<int>(output_type_)
+                         << ", scale=" << final_scale_
+                         << ", zero_point=" << final_zero_point_;
+  if (!sliced_tokens.empty()) {
+    NPU_EXECUTOR_LOG(INFO) << "Prefill tokens: " << FormatFirstN(sliced_tokens);
+  }
+  if (!embeddings.empty()) {
+    NPU_EXECUTOR_LOG(INFO) << "Prefill embeddings: "
+                           << FormatFirstN(embeddings);
+  }
+  if (!ple_embeddings.empty()) {
+    NPU_EXECUTOR_LOG(INFO) << "Prefill PLE embeddings: "
+                           << FormatFirstN(ple_embeddings);
+  }
+  // Set prefill input embeddings.
+  {
+    auto& buffer = llm_inference_context_
+                       .prefill_input_buffers[LlmSignatures::kInputEmbeddings];
+    auto tensor_type = buffer.TensorType();
+    NPU_EXECUTOR_LOG(INFO) << "Embeddings buffer element type: "
+                           << (tensor_type.HasValue()
+                                   ? static_cast<int>(
+                                         tensor_type->ElementType())
+                                   : -1);
+    LITERT_ASSIGN_OR_RETURN(size_t buffer_size, buffer.PackedSize());
+    RET_CHECK_GE(buffer_size, embeddings.size() * sizeof(float));
+
+    LITERT_ASSIGN_OR_RETURN(
+        auto lock_and_addr,
+        ::litert::TensorBufferScopedLock::Create(
+            buffer, ::litert::TensorBuffer::LockMode::kWrite));
+    float* buffer_ptr = static_cast<float*>(lock_and_addr.second);
+
+    std::memcpy(buffer_ptr, embeddings.data(),
+                embeddings.size() * sizeof(float));
+
+    std::vector<float> default_emb;
+    if (UseEmbeddingLookupManager()) {
+      auto* text_lookup = embedding_lookup_manager_->GetTextEmbeddingLookup();
+      if (text_lookup != nullptr) {
+        default_emb = text_lookup->GetDefaultEmbeddingVector();
+      }
+    }
+
+    if (!tensor_type.HasValue()) {
+      return absl::InternalError(
+          "Failed to get prefill input embeddings tensor type.");
+    }
+    const auto& dims = tensor_type->Layout().Dimensions();
+    if (dims.size() < 3) {
+      return absl::InternalError(
+          "Prefill input embeddings tensor has unexpected shape.");
+    }
+    const size_t embedding_dim =
+        default_emb.empty() ? dims[2] : default_emb.size();
+    size_t starting_token = embeddings.size() / embedding_dim;
+    size_t num_tokens_to_fill = buffer_size / (embedding_dim * sizeof(float));
+
+    float* padding_ptr = buffer_ptr + starting_token * embedding_dim;
+
+    if (default_emb.size() == embedding_dim) {
+      for (size_t i = starting_token; i < num_tokens_to_fill; ++i) {
+        std::memcpy(padding_ptr, default_emb.data(),
+                    embedding_dim * sizeof(float));
+        padding_ptr += embedding_dim;
+      }
+    } else {
+      std::memset(padding_ptr, 0,
+                  (num_tokens_to_fill - starting_token) * embedding_dim *
+                      sizeof(float));
+    }
+  }
+
+  // Set prefill positions.
+  {
+    auto& buffer =
+        rope_context_.prefill_input_buffers[RopeSignatures::kInputPos];
+    LITERT_ASSIGN_OR_RETURN(size_t buffer_size, buffer.PackedSize());
+    RET_CHECK_GE(buffer_size, seq_positions.size() * sizeof(int32_t));
+
+    LITERT_ASSIGN_OR_RETURN(
+        auto lock_and_addr,
+        ::litert::TensorBufferScopedLock::Create(
+            buffer, ::litert::TensorBuffer::LockMode::kWrite));
+    int32_t* buffer_ptr = static_cast<int32_t*>(lock_and_addr.second);
+
+    std::memcpy(buffer_ptr, seq_positions.data(),
+                seq_positions.size() * sizeof(int32_t));
+
+    size_t starting_token = seq_positions.size();
+    size_t num_tokens_to_fill = buffer_size / sizeof(int32_t);
+    std::memset(buffer_ptr + starting_token, 0,
+                (num_tokens_to_fill - starting_token) * sizeof(int32_t));
+  }
+
+  // Set prefill per-layer embeddings if provided.
+  if (!ple_embeddings.empty()) {
+    auto& buffer =
+        llm_inference_context_.prefill_input_buffers[kPerLayerEmbedderTensor];
+
+    std::vector<float> default_ple_emb;
+    if (per_layer_embedding_lookup_manager_ != nullptr) {
+      auto* ple_lookup =
+          per_layer_embedding_lookup_manager_->GetTextEmbeddingLookup();
+      if (ple_lookup != nullptr) {
+        default_ple_emb = ple_lookup->GetDefaultEmbeddingVector();
+      }
+    }
+
+    LITERT_ASSIGN_OR_RETURN(RankedTensorType tensor_type, buffer.TensorType());
+    const auto& dims = tensor_type.Layout().Dimensions();
+    if (dims.size() < 3) {
+      return absl::InternalError(
+          "Prefill per-layer embeddings tensor has unexpected shape.");
+    }
+    const size_t ple_dim =
+        default_ple_emb.empty() ? dims[2] : default_ple_emb.size();
+    size_t starting_token = ple_embeddings.size() / ple_dim;
+
+    RETURN_IF_ERROR(WriteAndPadPleEmbeddings(
+        buffer, ple_embeddings, ple_dim, starting_token, default_ple_emb,
+        output_type_, final_scale_, final_zero_point_));
+  }
+
+  // Set prefill mask timestep.
+  {
+    auto& buffer =
+        mask_context_.prefill_input_buffers[MaskSignatures::kMaskInputTimeStep];
+    LITERT_ASSIGN_OR_RETURN(size_t buffer_size, buffer.PackedSize());
+    RET_CHECK_GE(buffer_size, sizeof(int32_t));
+    int32_t step = seq_positions[0];
+    LITERT_RETURN_IF_ERROR(buffer.Write(absl::MakeConstSpan(&step, 1)));
+  }
+
+  // Set temporary token IDs to prefill mask context to enable hardware masking.
+  if (!sliced_tokens.empty()) {
+    auto it = mask_context_.prefill_input_buffers.find(
+        MaskSignatures::kMaskInputTokens);
+    if (it != mask_context_.prefill_input_buffers.end()) {
+      auto& input_tokens_buffer = it->second;
+
+      LITERT_ASSIGN_OR_RETURN(size_t buffer_size,
+                              input_tokens_buffer.PackedSize());
+      size_t num_tokens_to_fill = buffer_size / sizeof(int32_t);
+
+      std::vector<int32_t> temp_tokens(num_tokens_to_fill, 0);
+      absl::c_copy(sliced_tokens, temp_tokens.begin());
+      for (auto& tid : temp_tokens) {
+        if (tid < 0) {
+          tid = 0;
+        }
+      }
+      LITERT_RETURN_IF_ERROR(
+          input_tokens_buffer.Write(absl::MakeConstSpan(temp_tokens)));
+    }
+  }
+
+  return PrefillCommonPipeline(prefill_signature);
+}
+
+absl::Status LlmLiteRtNpuCompiledModelExecutor::PrefillCommonPipeline(
+    absl::string_view prefill_signature) {
   // Invoke RoPE signature.
   {
     auto start = absl::Now();
@@ -2055,10 +2326,9 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::PrefillInternal(
   // Invoke LLM signature.
   {
     auto start = absl::Now();
-    auto res =
-        llm_compiled_model_.Run(LlmSignatures::kPrefillLlm,
-                                llm_inference_context_.prefill_input_buffers,
-                                llm_inference_context_.prefill_output_buffers);
+    auto res = llm_compiled_model_.Run(
+        prefill_signature, llm_inference_context_.prefill_input_buffers,
+        llm_inference_context_.prefill_output_buffers);
     RET_CHECK(res) << "Failed to run LLM model." << res.Error().Message();
     auto end = absl::Now();
     latency_stats_.prefill_llm_inference_latency_us +=
@@ -2085,6 +2355,7 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::PrefillInternal(
     latency_stats_.prefill_cache_update_inference_latency_us +=
         absl::ToInt64Microseconds(end - start);
   }
+
   return absl::OkStatus();
 }
 
@@ -2094,15 +2365,17 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
   auto start_prepare_inputs = absl::Now();
 
   {
-    if (id == -1) {
+    if (id == kInvalidTokenId && token->embedding().empty()) {
       return absl::InvalidArgumentError("No id available to be decoded.");
     }
 
-    // Decode input tokens.
-    RETURN_IF_ERROR(SetFirstElement(
-        embedder_context_.inference_context
-            .decode_input_buffers[EmbedderSignatures::kEmbedderInput],
-        id));
+    if (id != kInvalidTokenId) {
+      // Decode input tokens.
+      RETURN_IF_ERROR(SetFirstElement(
+          embedder_context_.inference_context
+              .decode_input_buffers[EmbedderSignatures::kEmbedderInput],
+          id));
+    }
 
     // Always update decode input position and timestep, even if
     // run_rope_and_mask is false. The LLM and Cache Update models still need to
@@ -2128,7 +2401,7 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
   latency_stats_.decode_prepare_input_latency_us +=
       absl::ToInt64Microseconds(end_prepare_inputs - start_prepare_inputs);
 
-  if (!UseEmbeddingLookupManager()) {
+  if (id != kInvalidTokenId && !UseEmbeddingLookupManager()) {
     // Invoke embedder signature for Gemma3, because we don't have the embedding
     // lookup manager to do it for us.
     {
@@ -2145,7 +2418,7 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
     }
   }
 
-  if (UseEmbeddingLookupManager()) {
+  if (UseEmbeddingLookupManager() || id == kInvalidTokenId) {
     // We'll write any pending embedding directly into the transformer
     // embedding buffer.
     auto start = absl::Now();
@@ -2169,7 +2442,13 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
   }
 
   {
-    if (use_hw_ple_for_npu_ && !ple_table_ptrs_.empty()) {
+    if (!token->per_layer_embedding().empty()) {
+      auto& buffer =
+          llm_inference_context_.decode_input_buffers[kPerLayerEmbedderTensor];
+      RETURN_IF_ERROR(WritePleEmbeddings(buffer, token->per_layer_embedding(),
+                                         output_type_, final_scale_,
+                                         final_zero_point_));
+    } else if (use_hw_ple_for_npu_ && !ple_table_ptrs_.empty()) {
       auto start = absl::Now();
       auto& ple_output_buffer =
           llm_inference_context_.decode_input_buffers[kPerLayerEmbedderTensor];
@@ -2186,6 +2465,7 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
 
       latency_stats_.decode_embedder_per_layer_inference_latency_us +=
           absl::ToInt64Microseconds(absl::Now() - start);
+
     } else if (embedder_per_layer_context_.has_value()) {
       auto start = absl::Now();
       auto res =
@@ -2199,6 +2479,23 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
                      << res.Error().Message();
       latency_stats_.decode_embedder_per_layer_inference_latency_us +=
           absl::ToInt64Microseconds(absl::Now() - start);
+
+      // Log device-computed PLE embeddings.
+      auto& ple_output_buffer =
+          embedder_per_layer_context_->inference_context.decode_output_buffers
+              [EmbedderPerLayerSignatures::kEmbedderOutput];
+      LITERT_ASSIGN_OR_RETURN(size_t ple_buffer_size,
+                              ple_output_buffer.PackedSize());
+      std::vector<float> ple_host(ple_buffer_size / sizeof(float));
+      auto read_status = ple_output_buffer.Read(absl::MakeSpan(ple_host));
+      if (read_status.HasValue()) {
+        NPU_EXECUTOR_LOG(INFO)
+            << "Device-computed PLE embeddings (first few): " << ple_host[0]
+            << ", " << ple_host[1] << ", " << ple_host[2];
+      } else {
+        NPU_EXECUTOR_LOG(WARNING) << "Failed to read PLE buffer from device: "
+                                  << read_status.Error().Message();
+      }
     }
   }
 
@@ -2668,7 +2965,7 @@ LlmLiteRtNpuCompiledModelExecutor::PerformRejectionSampling(
     const std::vector<int>& draft_tokens,
     const ::litert::TensorBuffer& verifier_logits_buffer) {
   int num_accepted = 0;
-  int bonus_token_id = -1;
+  int bonus_token_id = kInvalidTokenId;
 
   // Log all sampled tokens from the verifier for transparency.
   std::vector<int> all_verifier_sampled;
@@ -2787,7 +3084,8 @@ LlmLiteRtNpuCompiledModelExecutor::GetLatencyStats() const {
 }
 
 absl::Status LlmLiteRtNpuCompiledModelExecutor::Reset() {
-  ABSL_LOG(INFO) << "Custom NPU execution latency stats:\n" << latency_stats_;
+  NPU_EXECUTOR_LOG(INFO) << "Custom NPU execution latency stats:\n"
+                         << latency_stats_;
   current_step_ = 0;
   ran_decode_ = false;
   RETURN_IF_ERROR(processed_tokens_.RollBackToStep(0));
@@ -2895,6 +3193,12 @@ absl::StatusOr<std::unique_ptr<LlmLiteRtNpuCompiledModelExecutor>>
 LlmLiteRtNpuCompiledModelExecutor::Create(
     const LlmExecutorSettings& executor_settings, ModelResources& resources,
     Environment& env) {
+  bool enable_npu_debug_logging = false;
+  auto npu_config_status = executor_settings.GetBackendConfig<NpuConfig>();
+  if (npu_config_status.ok()) {
+    enable_npu_debug_logging = npu_config_status->enable_npu_debug_logging;
+  }
+
   LITERT_ASSIGN_OR_RETURN(
       const litert::Model* llm_model,
       resources.GetTFLiteModel(ModelType::kTfLitePrefillDecode));
@@ -2911,15 +3215,15 @@ LlmLiteRtNpuCompiledModelExecutor::Create(
     auto q_params = logits_tensor.PerTensorQuantization();
     quantization_params.scale = q_params.scale;
     quantization_params.zero_point = static_cast<int32_t>(q_params.zero_point);
-    ABSL_LOG(INFO) << "Logits quantization params from '" << kDecodeSignature
-                   << "' signature: scale=" << quantization_params.scale
-                   << " zero_point=" << quantization_params.zero_point;
+    ABSL_LOG_IF(INFO, enable_npu_debug_logging)
+        << "Logits quantization params from '" << kDecodeSignature
+        << "' signature: scale=" << quantization_params.scale
+        << " zero_point=" << quantization_params.zero_point;
   } else {
-    ABSL_LOG(WARNING) << "No quantization for logits in '" << kDecodeSignature
-                      << "' signature (using default scale= "
-                      << quantization_params.scale
-                      << ", zero_point= " << quantization_params.zero_point
-                      << ").";
+    ABSL_LOG_IF(WARNING, enable_npu_debug_logging)
+        << "No quantization for logits in '" << kDecodeSignature
+        << "' signature (using default scale= " << quantization_params.scale
+        << ", zero_point= " << quantization_params.zero_point << ").";
   }
   // For the lack of a better way to identify the model variants, we use the
   // presence of per-layer embeddings as the signal for Gemma3n.
@@ -3192,6 +3496,11 @@ LlmLiteRtNpuCompiledModelExecutor::CreateForModelHasPerLayerEmbedding(
     }
   }
 
+  LITERT_ASSIGN_OR_RETURN(
+      std::unique_ptr<EmbeddingLookupManager>
+          per_layer_embedding_lookup_manager,
+      EmbeddingLookupManager::Create(env, embedder_per_layer_model, false));
+
   auto executor = absl::WrapUnique(new LlmLiteRtNpuCompiledModelExecutor(
       executor_settings, env, std::move(embedder_context),
       std::move(npu_auxiliary_context), std::move(mask_context),
@@ -3199,6 +3508,7 @@ LlmLiteRtNpuCompiledModelExecutor::CreateForModelHasPerLayerEmbedding(
       std::move(llm_inference_context),
       std::move(cache_update_inference_context), std::move(prefill_runner_set),
       std::move(embedding_lookup_manager),
+      std::move(per_layer_embedding_lookup_manager),
       std::move(embedder_per_layer_context), quantization_params,
       std::move(ple_table_ptrs), std::move(ple_quant_params),
       std::move(ple_per_tensor_scales), table_count, output_type, final_scale,
@@ -3406,6 +3716,7 @@ LlmLiteRtNpuCompiledModelExecutor::CreateForModelWithoutPerLayerEmbedding(
       std::move(llm_inference_context),
       std::move(cache_update_inference_context), std::move(prefill_runner_set),
       std::move(maybe_embedding_lookup_manager),
+      /*per_layer_embedding_lookup_manager=*/nullptr,
       /*embedder_per_layer_context=*/std::nullopt, quantization_params, {}, {},
       {}, 0, litert::ElementType::None, 1.0f, 0, std::move(kv_quant_params),
       speculative_decoding_type, std::move(drafter_context),
