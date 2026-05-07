@@ -39,6 +39,7 @@ class Engine(interfaces.AbstractEngine):
       cache_dir: str = "",
       **kwargs,
   ):
+    force_f32 = kwargs.pop("force_f32", False)
     super().__init__(
         model_path=model_path,
         backend=backend,
@@ -74,6 +75,8 @@ class Engine(interfaces.AbstractEngine):
       self._lib.litert_lm_engine_settings_set_enable_speculative_decoding(
           settings, self.enable_speculative_decoding
       )
+    if force_f32:
+      self._lib.litert_lm_engine_settings_set_force_f32(settings, True)
 
     self._engine_ptr = self._lib.litert_lm_engine_create(settings)
     self._lib.litert_lm_engine_settings_delete(settings)

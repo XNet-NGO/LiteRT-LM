@@ -185,6 +185,7 @@ class Model:
       top_p: float | None = None,
       temperature: float | None = None,
       seed: int | None = None,
+      force_f32: bool = False,
   ):
     """Runs the model interactively or with a single prompt.
 
@@ -208,6 +209,7 @@ class Model:
       top_p: The cumulative probability threshold for nucleus sampling.
       temperature: The temperature to use for sampling.
       seed: The seed to use for randomization.
+      force_f32: Whether to force F32 precision.
     """
     if not self.exists():
       click.echo(
@@ -259,6 +261,7 @@ class Model:
             max_num_tokens=max_num_tokens,
             vision_backend=vision_backend_val,
             audio_backend=audio_backend_val,
+            force_f32=force_f32,
         )
 
       with engine_cm as engine:
@@ -468,6 +471,7 @@ class Model:
       backend: str = "cpu",
       enable_speculative_decoding: bool | None = None,
       max_num_tokens: int | None = None,
+      force_f32: bool = False,
   ):
     """Benchmarks the model.
 
@@ -479,6 +483,7 @@ class Model:
       enable_speculative_decoding: Whether to enable speculative decoding. If
         None, use the model's default.
       max_num_tokens: Maximum number of tokens for the KV cache.
+      force_f32: Whether to force F32 precision.
     """
     if not self.exists():
       click.echo(
@@ -512,6 +517,7 @@ class Model:
             cache_dir=":nocache",
             enable_speculative_decoding=enable_speculative_decoding,
             max_num_tokens=max_num_tokens,
+            force_f32=force_f32,
         )
 
       click.echo(f"Benchmarking model: {self.to_str()} ({self.model_path})")

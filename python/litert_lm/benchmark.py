@@ -24,6 +24,10 @@ from ._ffi import LiteRtLmInputData
 class Benchmark(interfaces.AbstractBenchmark):
   """Benchmark wrapper for the LiteRT-LM C API."""
 
+  def __init__(self, *args, **kwargs):
+    self.force_f32 = kwargs.pop("force_f32", False)
+    super().__init__(*args, **kwargs)
+
   def run(self) -> interfaces.BenchmarkInfo:
     lib = _get_lib()
     model_path = self.model_path
@@ -40,6 +44,9 @@ class Benchmark(interfaces.AbstractBenchmark):
           "Failed to create engine settings for benchmark"
           f" (model_path={model_path}, backend={backend_str})"
       )
+
+    if self.force_f32:
+      lib.litert_lm_engine_settings_set_force_f32(settings, True)
 
     lib.litert_lm_engine_settings_enable_benchmark(settings)
     if self.max_num_tokens is not None:

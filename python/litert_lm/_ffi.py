@@ -154,6 +154,10 @@ def _setup_lib_signatures(lib):
       ctypes.c_void_p,
       ctypes.c_bool,
   ]
+  lib.litert_lm_engine_settings_set_force_f32.argtypes = [
+      ctypes.c_void_p,
+      ctypes.c_bool,
+  ]
   lib.litert_lm_engine_settings_enable_benchmark.argtypes = [ctypes.c_void_p]
   lib.litert_lm_engine_settings_set_num_prefill_tokens.argtypes = [
       ctypes.c_void_p,

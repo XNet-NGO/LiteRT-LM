@@ -339,6 +339,14 @@ LITERT_LM_C_API_EXPORT
 void litert_lm_engine_settings_set_enable_speculative_decoding(
     LiteRtLmEngineSettings* settings, bool enable_speculative_decoding);
 
+// Sets whether to force F32 precision.
+//
+// @param settings The engine settings.
+// @param force_f32 Whether to force F32 precision.
+LITERT_LM_C_API_EXPORT
+void litert_lm_engine_settings_set_force_f32(LiteRtLmEngineSettings* settings,
+                                             bool force_f32);
+
 // Creates a LiteRT LM Engine from the given settings. The caller is responsible
 // for destroying the engine using `litert_lm_engine_delete`.
 //

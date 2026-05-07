@@ -463,6 +463,22 @@ void litert_lm_engine_settings_set_enable_speculative_decoding(
   }
 }
 
+void litert_lm_engine_settings_set_force_f32(LiteRtLmEngineSettings* settings,
+                                             bool force_f32) {
+  if (settings && settings->settings && force_f32) {
+    settings->settings->GetMutableMainExecutorSettings().SetActivationDataType(
+        litert::lm::ActivationDataType::FLOAT32);
+    if (settings->settings->GetVisionExecutorSettings().has_value()) {
+      settings->settings->GetMutableVisionExecutorSettings()
+          ->SetActivationDataType(litert::lm::ActivationDataType::FLOAT32);
+    }
+    if (settings->settings->GetAudioExecutorSettings().has_value()) {
+      settings->settings->GetMutableAudioExecutorSettings()
+          ->SetActivationDataType(litert::lm::ActivationDataType::FLOAT32);
+    }
+  }
+}
+
 void litert_lm_engine_settings_set_activation_data_type(
     LiteRtLmEngineSettings* settings, int activation_data_type_int) {
   if (settings && settings->settings) {

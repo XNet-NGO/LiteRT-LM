@@ -326,6 +326,12 @@ Speculative decoding mode ("auto", "true", "false").
       default="cpu",
       help="The backend to use.",
   )(f)
+  f = click.option(
+      "--force-f32",
+      is_flag=True,
+      default=False,
+      help="Whether to force F32 precision.",
+  )(f)
   return f
 
 
@@ -378,6 +384,7 @@ def benchmark(
     from_huggingface_repo: str | None = None,
     huggingface_token: str | None = None,
     max_num_tokens: int | None = None,
+    force_f32: bool = False,
 ):
   """Benchmarks a LiteRT-LM model.
 
@@ -395,6 +402,7 @@ def benchmark(
     from_huggingface_repo: The HuggingFace repository ID.
     huggingface_token: The HuggingFace API token.
     max_num_tokens: Maximum number of tokens for the KV cache.
+    force_f32: Whether to force F32 precision.
   """
   if verbose:
     litert_lm.set_min_log_severity(litert_lm.LogSeverity.VERBOSE)
@@ -421,6 +429,7 @@ def benchmark(
       backend=backend,
       enable_speculative_decoding=enable_speculative_decoding,
       max_num_tokens=max_num_tokens,
+      force_f32=force_f32,
   )
 
 
@@ -553,6 +562,7 @@ def run(
     top_p: float | None = None,
     temperature: float | None = None,
     seed: int | None = None,
+    force_f32: bool = False,
 ):
   r"""Runs a LiteRT-LM model interactively or with a single prompt.
 
@@ -582,6 +592,7 @@ def run(
     top_p: The cumulative probability threshold for nucleus sampling.
     temperature: The temperature to use for sampling.
     seed: The seed to use for randomization.
+    force_f32: Whether to force F32 precision.
   """
   if attachment and no_template:
     click.echo(
@@ -698,6 +709,7 @@ def run(
       top_p=top_p,
       temperature=temperature,
       seed=seed,
+      force_f32=force_f32,
   )
 
 

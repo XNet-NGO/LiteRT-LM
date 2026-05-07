@@ -147,6 +147,56 @@ class MainTest(absltest.TestCase):
       self.assertEqual(kwargs["temperature"], 0.8)
       self.assertEqual(kwargs["seed"], 42)
 
+  def test_run_force_f32_flag(self):
+    with unittest.mock.patch(
+        "litert_lm_cli.model.Model.from_model_reference",
+        autospec=True,
+    ) as mock_from_model_ref:
+      mock_model = unittest.mock.MagicMock()
+      mock_from_model_ref.return_value = mock_model
+      mock_model.exists.return_value = True
+
+      runner = CliRunner()
+      result = runner.invoke(
+          main.cli,
+          [
+              "run",
+              "my-model",
+              "--prompt",
+              "hi",
+              "--force-f32",
+          ],
+      )
+
+      self.assertEqual(result.exit_code, 0)
+      mock_model.run_interactive.assert_called_once()
+      kwargs = mock_model.run_interactive.call_args.kwargs
+      self.assertTrue(kwargs["force_f32"])
+
+  def test_benchmark_force_f32_flag(self):
+    with unittest.mock.patch(
+        "litert_lm_cli.model.Model.from_model_reference",
+        autospec=True,
+    ) as mock_from_model_ref:
+      mock_model = unittest.mock.MagicMock()
+      mock_from_model_ref.return_value = mock_model
+      mock_model.exists.return_value = True
+
+      runner = CliRunner()
+      result = runner.invoke(
+          main.cli,
+          [
+              "benchmark",
+              "my-model",
+              "--force-f32",
+          ],
+      )
+
+      self.assertEqual(result.exit_code, 0)
+      mock_model.benchmark.assert_called_once()
+      kwargs = mock_model.benchmark.call_args.kwargs
+      self.assertTrue(kwargs["force_f32"])
+
   def test_run_no_template_flag(self):
     runner = CliRunner()
     # Test that --no-template is a valid option for the run command.
