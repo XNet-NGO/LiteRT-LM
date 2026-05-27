@@ -28,7 +28,7 @@ self.addEventListener('fetch', (e) => {
   // Prioritizes network fetches so developers and users receive updates instantly on reload,
   // falling back strictly to local shell caches when offline.
   e.respondWith(
-    fetch(e.request, { credentials: 'include' })
+    fetch(e.request)
       .then((response) => {
         // Cache local origin resources dynamically on the fly
         if (response.status === 200 && url.origin === self.location.origin) {
