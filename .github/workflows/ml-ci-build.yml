@@ -36,10 +36,11 @@ concurrency:
 jobs:
   presubmit:
     name: "Presubmit"
-    runs-on: "linux-x86-n2-16"
+    runs-on: "linux-x86-c4-16"
     container:
       image: ubuntu:24.04
     permissions:
+      id-token: write     # Required to get the OIDC token for WIF
       actions: write  # For gh cache delete.
       contents: write  # For gh release upload.
     env:
@@ -115,6 +116,12 @@ jobs:
         # This guarantees Bazel finds it during both the Linux //... eval and the actual Android compile
         run: echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
 
+      # - name: Authenticate to Google Cloud
+      #   id: auth
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     service_account: 'litert-lm-github-cache-runner@litert-lm.iam.gserviceaccount.com'
+
       - name : Set up cache keys.
         id: cache-keys
         run: |
@@ -137,16 +144,67 @@ jobs:
       - name: Restore bazel cache if cache is not being refreshed.
         id: bazel-cache
         if: env.REFRESH_CACHE != 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/bazel
-          key: ${{ steps.cache-keys.outputs.CACHE_KEY }}
-          restore-keys: |
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_HEAD }}
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_0 }}-
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_1 }}-
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_2 }}-
+        run: |
+          TARGET_DIR="$HOME/.cache/bazel"
+          BUCKET_URL="gs://litert-lm-cicd/caches/linux/bazel"
+
+          # Expose the primary key that was requested downstream
+          echo "cache-primary-key=${{ steps.cache-keys.outputs.CACHE_KEY }}" >> "$GITHUB_OUTPUT"
+
+          # Array of keys and fallbacks in priority order
+          CACHE_KEYS=(
+            "${{ steps.cache-keys.outputs.CACHE_KEY }}"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_HEAD }}"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_0 }}-"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_1 }}-"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_2 }}-"
+            )
+
+          FOUND_BLOB=""
+
+          # Capture the gcloud output (including stderr redirected to stdout)
+          # Note: Ensure BucketUrl is defined without the '${$Var}' PowerShell syntax; use $bucket_url
+          gcloud_output=gcloud storage ls "${bucket_url}"
+
+          for key in "${CACHE_KEYS[@]}"; do
+              search_path="${bucket_url}/${key}"
+              echo "Checking for cache key: ${SEARCH_PATH}*"
+
+              # Check if the specific path exists in the gcloud output
+              # -F treats it as a fixed string, -q keeps it quiet, -m 1 stops at the first match
+              if echo "$gcloud_output" | grep -Fq "$SEARCH_PATH"; then
+                  echo "Found cache key: ${SEARCH_PATH}*"
+                  FOUND_BLOB="${SEARCH_PATH}*"
+                  break
+              else
+                  echo "Key Miss: ${SEARCH_PATH}*"
+              fi
+          done
+
+          if [ ! -z "$FOUND_BLOB" ]; then
+            echo "Cache hit! Found blob: $FOUND_BLOB"
+
+            # Parse the clean key name out of the full GCS blob path for logging
+            MATCHED_KEY=$(basename "$FOUND_BLOB" .tar.gz)
+            echo "cache-hit=true" >> "$GITHUB_OUTPUT"
+            echo "cache-matched-key=$MATCHED_KEY" >> "$GITHUB_OUTPUT"
+
+            echo "Downloading cache archive..."
+            # FOUND_BLOB now contains the full gs:// path, so use it directly
+            gcloud storage cp "$FOUND_BLOB" ./cache.tar.gz
+
+            if [ -f ./cache.tar.gz ]; then
+              echo "Extracting artifacts to $TARGET_DIR..."
+              mkdir -p "$TARGET_DIR"
+              tar -xzf ./cache.tar.gz -C "$TARGET_DIR"
+              rm -f ./cache.tar.gz
+            fi
+          else
+            echo "No matching cache found in GCS. Proceeding with clean build."
+            echo "cache-hit=false" >> "$GITHUB_OUTPUT"
+            echo "cache-matched-key=" >> "$GITHUB_OUTPUT"
+          fi
+
 
       - name: Check cache hit.
         run: |
@@ -223,7 +281,7 @@ jobs:
 
       - name: Run bazel build for Android.
         run: |
-          bazelisk build --disk_cache=~/.cache/bazel --config=android_arm64 \
+          bazelisk build --disk_cache=~/.cache/bazel --config=android_x86_64 \
             --deleted_packages=swift \
             //... \
             //runtime/engine:litert_lm_main \
@@ -236,17 +294,21 @@ jobs:
       - name: Update litert_lm_main prebuilt for Android if new version tag is pushed.
         if: github.ref_type == 'tag'
         run: |
-          cp bazel-bin/runtime/engine/litert_lm_main litert_lm_main.android_arm64
-          gh release upload ${{ github.ref_name }} litert_lm_main.android_arm64 --clobber
+          cp bazel-bin/runtime/engine/litert_lm_main litert_lm_main.android_x86_64
+          gh release upload ${{ github.ref_name }} litert_lm_main.android_x86_64 --clobber
 
       - name: Remove cache if cache is being refreshed.
         if: env.REFRESH_CACHE == 'true'
         continue-on-error: true  # Ignore errors when cache is not found.
-        run: gh cache delete ${{ steps.cache-keys.outputs.CACHE_KEY }}
+        run: |
+          CACHE_KEY="${{ steps.cache-keys.outputs.CACHE_KEY }}"
+          BUCKET_URL="gs://litert-lm-cicd/caches/linux/bazel"
+          echo "REFRESH_CACHE is true. Removing existing cache from GCS: $BUCKET_URL/$CACHE_KEY.tar.gz"
+          gcloud storage rm "$BUCKET_URL/$CACHE_KEY.tar.gz"
 
       - name: Save bazel cache if it's new or being refreshed.
         uses: actions/cache/save@v4
-        if: env.REFRESH_CACHE == 'true'
+        if: env.REFRESH_CACHE == 'true' || steps.bazel-cache.outputs.cache-hit != 'true'
         with:
           path: |
             ~/.cache/bazel

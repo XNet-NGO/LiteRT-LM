@@ -41,6 +41,7 @@ jobs:
       run:
         shell: powershell
     permissions:
+      id-token: write     # Required to get the OIDC token for WIF
       actions: write  # For gh cache delete.
       contents: write  # For gh release upload.
     env:
@@ -133,6 +134,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+
+      # - name: Authenticate to Google Cloud
+      #   id: auth
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     service_account: 'litert-lm-github-cache-runner@litert-lm.iam.gserviceaccount.com'
+
       - name: Set up cache keys and bazel output base
         id: cache-keys
         run: |
@@ -160,23 +168,78 @@ jobs:
           $SHORT_SHA=$("${{ github.sha }}".SubString(0, 8))
           echo "BAZEL_OUTPUT_BASE=${BAZEL_OUTPUT_BASE}-$SHORT_SHA" >> "$env:GITHUB_ENV"
 
+
       - name: Clean build outputs if cache is being refreshed
         if: env.REFRESH_CACHE == 'true'
         run: bazel --output_base="$env:BAZEL_OUTPUT_BASE" clean --expunge
 
-      - name: Restore bazel cache if cache is not being refreshed
+
+      - name: Restore bazel cache if cache is not being refreshed.
         id: bazel-cache
         if: env.REFRESH_CACHE != 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/bazel
-          key: ${{ steps.cache-keys.outputs.CACHE_KEY }}
-          restore-keys: |
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_HEAD }}
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_0 }}-
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_1 }}-
-            ${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_2 }}-
+        run: |
+          TARGET_DIR="$HOME/.cache/bazel"
+          BUCKET_URL="gs://litert-lm-cicd/caches/linux/bazel"
+
+          # Expose the primary key that was requested downstream
+          echo "cache-primary-key=${{ steps.cache-keys.outputs.CACHE_KEY }}" >> "$GITHUB_OUTPUT"
+
+          # Array of keys and fallbacks in priority order
+          CACHE_KEYS=(
+            "${{ steps.cache-keys.outputs.CACHE_KEY }}"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_HEAD }}"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_0 }}-"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_1 }}-"
+            "${{ steps.cache-keys.outputs.CACHE_RESTORE_KEY_2 }}-"
+          )
+
+          FOUND_BLOB=""
+
+          # Correct Bash command substitution to capture the bucket list into a variable
+          GCLOUD_OUTPUT=$(gcloud storage ls "${BUCKET_URL}")
+
+          for KEY in "${CACHE_KEYS[@]}"; do
+              SEARCH_PATH="${BUCKET_URL}/${KEY}"
+              echo "Checking for cache key: ${SEARCH_PATH}*"
+
+              # Check if the specific prefix exists anywhere in the gcloud output list
+              if echo "$GCLOUD_OUTPUT" | grep -Fq "$SEARCH_PATH"; then
+                  echo "Found cache key: ${SEARCH_PATH}*"
+                  FOUND_BLOB="${SEARCH_PATH}*"
+                  break
+              else
+                  echo "Key Miss: ${SEARCH_PATH}*"
+              fi
+          done
+
+          if [ -n "$FOUND_BLOB" ]; then
+            echo "Cache hit! Found blob: $FOUND_BLOB"
+
+            # Pure Bash string manipulation to mimic PowerShell's Split-Path and regex replace.
+            # This strips everything up to the last slash, keeping the trailing '*' intact if present.
+            FILE_NAME="${FOUND_BLOB##*/}"
+            MATCHED_KEY="${FILE_NAME%.tar.gz}"
+
+            echo "cache-hit=true" >> "$GITHUB_OUTPUT"
+            echo "cache-matched-key=$MATCHED_KEY" >> "$GITHUB_OUTPUT"
+
+            echo "Downloading cache archive..."
+            # Kept double-quoted so Bash passes the literal '*' string to gcloud instead of expanding it locally
+            gcloud storage cp "$FOUND_BLOB" ./cache.tar.gz
+
+            if [ -f ./cache.tar.gz ]; then
+              echo "Extracting artifacts to $TARGET_DIR..."
+              mkdir -p "$TARGET_DIR"
+              tar -xzf ./cache.tar.gz -C "$TARGET_DIR"
+              rm -f ./cache.tar.gz
+            fi
+          else
+            echo "No matching cache found in GCS. Proceeding with clean build."
+            echo "cache-hit=false" >> "$GITHUB_OUTPUT"
+            echo "cache-matched-key=" >> "$GITHUB_OUTPUT"
+          fi
+
+
 
       - name: Check cache hit
         run: |
@@ -266,13 +329,36 @@ jobs:
 
       - name: Remove cache if cache is being refreshed
         if: env.REFRESH_CACHE == 'true'
-        continue-on-error: true  # Ignore errors when cache is not found.
-        run: gh cache delete ${{ steps.cache-keys.outputs.CACHE_KEY }}
+        continue-on-error: true  # Keeps the build moving if the file wasn't there to begin with
+        run: |
+          $CacheKey = "${{ steps.cache-keys.outputs.CACHE_KEY }}"
+          $BucketUrl = "gs://litert-lm-cicd/caches/windows/bazel"
+
+          Write-Host "REFRESH_CACHE is true. Removing existing cache from GCS: $BucketUrl/$CacheKey.tar.gz"
+
+          # Delete the specific tarball from the GCS bucket
+          gcloud storage rm "$BucketUrl/$CacheKey.tar.gz"
 
       - name: Save bazel cache if it's new or being refreshed
-        uses: actions/cache/save@v4
-        if: env.REFRESH_CACHE == 'true'
-        with:
-          path: |
-            ~/.cache/bazel
-          key: ${{ steps.cache-keys.outputs.CACHE_KEY }}
+        if: env.REFRESH_CACHE == 'true' || steps.bazel-cache.outputs.cache-hit != 'true'
+        run: |
+          $TargetDir = "$HOME/.cache/bazel"
+          $CacheKey = "${{ steps.cache-keys.outputs.CACHE_KEY }}"
+          $BucketUrl = "gs://litert-lm-cicd/caches/windows/bazel"
+          $ArchiveName = "cache.tar.gz"
+
+          Write-Host "Checking if target cache folder exists: $TargetDir"
+          if (-not (Test-Path $TargetDir)) {
+              Write-Host "Target cache folder not found. Skipping cache save."
+              exit 0
+          }
+
+          Write-Host "Compressing cache artifacts from $TargetDir..."
+          # Compress the contents of the bazel cache directory
+          # -C changes to the directory, and the dot (.) grabs everything inside it
+          tar -czf ./$ArchiveName -C $TargetDir .
+
+          if (Test-Path "./$ArchiveName") {
+              Write-Host "Uploading cache archive to $BucketUrl/$CacheKey.tar.gz..."
+              gcloud storage cp ./$ArchiveName "$BucketUrl/$CacheKey.tar.gz"
+          }
