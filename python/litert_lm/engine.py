@@ -157,6 +157,7 @@ class Engine(interfaces.AbstractEngine):
       sampler_config: interfaces.SamplerConfig | None = None,
       system_message: str | None = None,
       enable_constrained_decoding: bool = False,
+      enable_thinking: bool = False,
   ) -> Conversation:
     session_config = self._lib.litert_lm_session_config_create()
     if sampler_config:
@@ -212,6 +213,11 @@ class Engine(interfaces.AbstractEngine):
 
     if enable_constrained_decoding:
       self._lib.litert_lm_conversation_config_set_enable_constrained_decoding(
+          conv_config, True
+      )
+
+    if enable_thinking:
+      self._lib.litert_lm_conversation_config_set_enable_thinking(
           conv_config, True
       )
 
