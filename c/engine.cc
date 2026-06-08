@@ -1126,9 +1126,9 @@ LiteRtLmJsonResponse* litert_lm_conversation_send_message(
   if (!conversation || !conversation->conversation) {
     return nullptr;
   }
-  nlohmann::json json_message =
-      nlohmann::json::parse(message_json, /*cb=*/nullptr,
-                            /*allow_exceptions=*/false);
+  nlohmann::ordered_json json_message =
+      nlohmann::ordered_json::parse(message_json, /*cb=*/nullptr,
+                                    /*allow_exceptions=*/false);
   if (json_message.is_discarded()) {
     ABSL_LOG(ERROR) << "Failed to parse message JSON.";
     return nullptr;
@@ -1140,7 +1140,7 @@ LiteRtLmJsonResponse* litert_lm_conversation_send_message(
       optional_args ? optional_args->max_output_tokens : std::nullopt);
 
   auto response = conversation->conversation->SendMessage(
-      json_message, std::move(litert_lm_optional_args));
+      Message(json_message), std::move(litert_lm_optional_args));
   if (!response.ok()) {
     ABSL_LOG(ERROR) << "Failed to send message: " << response.status();
     return nullptr;
@@ -1170,9 +1170,9 @@ int litert_lm_conversation_send_message_stream(
   if (!conversation || !conversation->conversation) {
     return -1;
   }
-  nlohmann::json json_message =
-      nlohmann::json::parse(message_json, /*cb=*/nullptr,
-                            /*allow_exceptions=*/false);
+  nlohmann::ordered_json json_message =
+      nlohmann::ordered_json::parse(message_json, /*cb=*/nullptr,
+                                    /*allow_exceptions=*/false);
   if (json_message.is_discarded()) {
     ABSL_LOG(ERROR) << "Failed to parse message JSON.";
     return -1;
@@ -1184,7 +1184,7 @@ int litert_lm_conversation_send_message_stream(
       optional_args ? optional_args->max_output_tokens : std::nullopt);
 
   absl::Status status = conversation->conversation->SendMessageAsync(
-      json_message, CreateConversationCallback(callback, callback_data),
+      Message(json_message), CreateConversationCallback(callback, callback_data),
       std::move(litert_lm_optional_args));
 
   if (!status.ok()) {
