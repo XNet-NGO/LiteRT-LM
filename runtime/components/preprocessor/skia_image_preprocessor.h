@@ -15,6 +15,8 @@
 #ifndef THIRD_PARTY_ODML_LITERT_LM_RUNTIME_COMPONENTS_PREPROCESSOR_SKIA_IMAGE_PREPROCESSOR_H_
 #define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_COMPONENTS_PREPROCESSOR_SKIA_IMAGE_PREPROCESSOR_H_
 
+#include <vector>
+
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "runtime/components/preprocessor/image_preprocessor.h"
 #include "runtime/engine/io_types.h"
@@ -29,6 +31,9 @@ class SkiaImagePreprocessor : public ImagePreprocessor {
   absl::StatusOr<InputImage> Preprocess(
       const InputImage& input_image,
       const ImagePreprocessParameter& parameter) override;
+
+ private:
+  std::vector<float> float_image_;
 };
 
 }  // namespace litert::lm

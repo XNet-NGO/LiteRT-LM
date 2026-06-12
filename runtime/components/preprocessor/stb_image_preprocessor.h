@@ -37,9 +37,7 @@ class StbImagePreprocessor : public ImagePreprocessor {
       const ImagePreprocessParameter& parameter) override;
 
  private:
-  // Patchify the image into a tensor buffer.
-  absl::StatusOr<InputImage> PatchifyImage(
-      std::vector<float> image_data, const ImagePreprocessParameter& parameter);
+  std::vector<float> float_image_;
 };
 
 }  // namespace litert::lm
