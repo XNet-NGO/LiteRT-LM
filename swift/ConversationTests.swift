@@ -31,7 +31,7 @@ class ConversationTests: XCTestCase {
   override func setUp() async throws {
     try await super.setUp()
     let modelResource =
-      "runtime/testdata/test_lm.litertlm"
+      + "runtime/testdata/test_lm.litertlm"
     let modelPath = testDataPath(forResource: modelResource)
     ExperimentalFlags.optIntoExperimentalAPIs()
     ExperimentalFlags.enableBenchmark = true
@@ -298,5 +298,17 @@ class ConversationTests: XCTestCase {
     let rendered = try conversation.renderMessageIntoString(Message("Hello world", role: .user))
     XCTAssertFalse(rendered.isEmpty)
     XCTAssertTrue(rendered.contains("Hello world"))
+  }
+
+  func testRenderPrefaceIntoString() async throws {
+    let config = ConversationConfig(
+      initialMessages: [Message("You are a helpful assistant", role: .system)]
+    )
+    let conversation = try await self.engine.createConversation(with: config)
+    XCTAssertTrue(conversation.isAlive)
+
+    let rendered = try conversation.renderPrefaceIntoString()
+    XCTAssertFalse(rendered.isEmpty)
+    XCTAssertTrue(rendered.contains("You are a helpful assistant"))
   }
 }

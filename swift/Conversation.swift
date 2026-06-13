@@ -116,11 +116,13 @@ public class Conversation {
     }
     let optionalArgs = litert_lm_conversation_optional_args_create()
     if let visualTokenBudget = ExperimentalFlags.visualTokenBudget {
-      litert_lm_conversation_optional_args_set_visual_token_budget(optionalArgs, Int32(visualTokenBudget))
+      litert_lm_conversation_optional_args_set_visual_token_budget(
+        optionalArgs, Int32(visualTokenBudget))
     }
     defer { litert_lm_conversation_optional_args_delete(optionalArgs) }
 
-    guard let responsePtr = litert_lm_conversation_send_message(
+    guard
+      let responsePtr = litert_lm_conversation_send_message(
         handle, messageString, extraContextString, optionalArgs)
     else {
       throw LiteRTLMError.conversation(.invalidResponse("Native sendMessage returned null."))
@@ -236,7 +238,8 @@ public class Conversation {
 
     let optionalArgs = litert_lm_conversation_optional_args_create()
     if let visualTokenBudget = ExperimentalFlags.visualTokenBudget {
-      litert_lm_conversation_optional_args_set_visual_token_budget(optionalArgs, Int32(visualTokenBudget))
+      litert_lm_conversation_optional_args_set_visual_token_budget(
+        optionalArgs, Int32(visualTokenBudget))
     }
     defer { litert_lm_conversation_optional_args_delete(optionalArgs) }
 
@@ -281,6 +284,18 @@ public class Conversation {
     guard let cString = litert_lm_conversation_render_message_to_string(handle, messageString)
     else {
       throw LiteRTLMError.conversation(.invalidResponse("Failed to render message into string."))
+    }
+    return String(cString: cString)
+  }
+
+  /// Renders the preface into a string for testing and logging.
+  ///
+  /// - Returns: The rendered preface string.
+  /// - Throws: A `LiteRTLMError` if the conversation is not alive, or rendering fails.
+  public func renderPrefaceIntoString() throws -> String {
+    let handle = try checkIsAlive()
+    guard let cString = litert_lm_conversation_render_preface_to_string(handle) else {
+      throw LiteRTLMError.conversation(.invalidResponse("Failed to render preface into string."))
     }
     return String(cString: cString)
   }
