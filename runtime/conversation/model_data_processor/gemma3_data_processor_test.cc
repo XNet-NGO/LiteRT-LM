@@ -161,6 +161,10 @@ class Gemma3DataProcessorTest : public ::testing::Test {
   std::unique_ptr<Tokenizer> tokenizer_;
 };
 
+class Gemma3DataProcessorImageTest
+    : public Gemma3DataProcessorTest,
+      public ::testing::WithParamInterface<std::string> {};
+
 TEST_F(Gemma3DataProcessorTest, ToInputDataVectorTextOnly) {
   ASSERT_OK_AND_ASSIGN(auto processor, Gemma3DataProcessor::Create());
   const std::string rendered_template_prompt =
@@ -177,7 +181,8 @@ TEST_F(Gemma3DataProcessorTest, ToInputDataVectorTextOnly) {
   EXPECT_THAT(input_data, ElementsAre(HasInputText(&expected_text)));
 }
 
-TEST_F(Gemma3DataProcessorTest, ToInputDataVectorTextAndImage) {
+TEST_P(Gemma3DataProcessorImageTest, ToInputDataVectorTextAndImage) {
+  std::string image_name = GetParam();
   ASSERT_OK_AND_ASSIGN(auto processor, Gemma3DataProcessor::Create(
                                            /*Gemma3DataProcessorConfig=*/
                                            {.image_tensor_height = 224,
@@ -187,7 +192,7 @@ TEST_F(Gemma3DataProcessorTest, ToInputDataVectorTextAndImage) {
       "<start_of_image><end_of_turn>";
 
   std::string image_path = (std::filesystem::path(::testing::SrcDir()) /
-                            kImageTestdataDir / "apple.bmp")
+                            kImageTestdataDir / image_name)
                                .string();
   const nlohmann::ordered_json message = {
       {"role", "user"},
@@ -446,7 +451,9 @@ What is the capital of France?<end_of_turn>
   EXPECT_THAT(input_data, ElementsAre(HasInputText(&expected_text)));
 }
 
-TEST_F(Gemma3DataProcessorTest, PromptTemplateToInputDataVectorTextAndImage) {
+TEST_P(Gemma3DataProcessorImageTest,
+       PromptTemplateToInputDataVectorTextAndImage) {
+  std::string image_name = GetParam();
   const std::string test_file_path =
       GetTestdataPath("google-gemma-3-1b-it.jinja");
   ASSERT_OK_AND_ASSIGN(const std::string template_content,
@@ -454,7 +461,7 @@ TEST_F(Gemma3DataProcessorTest, PromptTemplateToInputDataVectorTextAndImage) {
   PromptTemplate prompt_template(template_content);
 
   std::string image_path = (std::filesystem::path(::testing::SrcDir()) /
-                            kImageTestdataDir / "apple.bmp")
+                            kImageTestdataDir / image_name)
                                .string();
   const nlohmann::ordered_json messages = {
       {{"role", "system"}, {"content", "Hello world!"}},
@@ -1250,4 +1257,9 @@ TEST_F(Gemma3DataProcessorTest, CloneStateWithAudio) {
 #endif
 
 }  // namespace
+
+INSTANTIATE_TEST_SUITE_P(Gemma3DataProcessorImageTests,
+                         Gemma3DataProcessorImageTest,
+                         ::testing::Values("apple.bmp", "apple.png"));
+
 }  // namespace litert::lm

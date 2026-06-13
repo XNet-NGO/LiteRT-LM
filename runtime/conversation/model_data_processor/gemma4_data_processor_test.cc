@@ -126,6 +126,10 @@ class Gemma4DataProcessorTest : public ::testing::Test {
   std::unique_ptr<Tokenizer> tokenizer_;
 };
 
+class Gemma4DataProcessorImageTest
+    : public Gemma4DataProcessorTest,
+      public ::testing::WithParamInterface<std::string> {};
+
 TEST_F(Gemma4DataProcessorTest, ToInputDataVectorTextOnly) {
   ASSERT_OK_AND_ASSIGN(auto processor, Gemma4DataProcessor::Create());
   const std::string rendered_template_prompt =
@@ -142,7 +146,8 @@ TEST_F(Gemma4DataProcessorTest, ToInputDataVectorTextOnly) {
   EXPECT_THAT(input_data, ElementsAre(HasInputText(&expected_text)));
 }
 
-TEST_F(Gemma4DataProcessorTest, ToInputDataVectorTextAndImage) {
+TEST_P(Gemma4DataProcessorImageTest, ToInputDataVectorTextAndImage) {
+  std::string image_name = GetParam();
   ASSERT_OK_AND_ASSIGN(auto processor, Gemma4DataProcessor::Create(
                                            /*Gemma4DataProcessorConfig=*/
                                            {.max_num_patches = 2520}));
@@ -150,7 +155,7 @@ TEST_F(Gemma4DataProcessorTest, ToInputDataVectorTextAndImage) {
       "<|turn>user\nHere is an image of apples <|image|><turn|>";
 
   std::string image_path = (std::filesystem::path(::testing::SrcDir()) /
-                            kImageTestdataDir / "apple.png")
+                            kImageTestdataDir / image_name)
                                .string();
   const nlohmann::ordered_json message = {
       {"role", "user"},
@@ -1557,4 +1562,9 @@ INSTANTIATE_TEST_SUITE_P(FcFormatCodeOrTemplate, Gemma4RenderTemplateTest,
                          }));
 
 }  // namespace
+
+INSTANTIATE_TEST_SUITE_P(Gemma4DataProcessorImageTests,
+                         Gemma4DataProcessorImageTest,
+                         ::testing::Values("apple.bmp", "apple.png"));
+
 }  // namespace litert::lm
