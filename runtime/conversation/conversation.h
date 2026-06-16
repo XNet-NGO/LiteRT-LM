@@ -214,7 +214,8 @@ class ConversationConfig {
           overwrite_processor_config_, enable_constrained_decoding_,
           prefill_preface_on_init_, constraint_provider_config_, channels_,
           filter_channel_content_from_kv_cache_, return_error_on_parse_failure_,
-          return_error_on_max_tokens_reached_, enable_thinking_);
+          return_error_on_max_tokens_reached_, enable_thinking_
+      );
     }
 
     // Returns a unique pointer to a ConversationConfig.
@@ -285,20 +286,22 @@ class ConversationConfig {
       bool filter_channel_content_from_kv_cache = false,
       bool return_error_on_parse_failure = true,
       bool return_error_on_max_tokens_reached = false,
-      bool enable_thinking = false);
+      bool enable_thinking = false
+  );
 
-  explicit ConversationConfig(SessionConfig session_config, Preface preface,
-                              PromptTemplate prompt_template,
-                              DataProcessorConfig processor_config,
-                              bool constrained_decoding_enabled = false,
-                              bool prefill_preface_on_init = false,
-                              std::optional<ConstraintProviderConfig>
-                                  constraint_provider_config = std::nullopt,
-                              std::vector<Channel> channels = {},
-                              bool filter_channel_content_from_kv_cache = false,
-                              bool return_error_on_parse_failure = true,
-                              bool return_error_on_max_tokens_reached = false,
-                              bool enable_thinking = false)
+  explicit ConversationConfig(
+      SessionConfig session_config, Preface preface,
+      PromptTemplate prompt_template, DataProcessorConfig processor_config,
+      bool constrained_decoding_enabled = false,
+      bool prefill_preface_on_init = false,
+      std::optional<ConstraintProviderConfig> constraint_provider_config =
+          std::nullopt,
+      std::vector<Channel> channels = {},
+      bool filter_channel_content_from_kv_cache = false,
+      bool return_error_on_parse_failure = true,
+      bool return_error_on_max_tokens_reached = false,
+      bool enable_thinking = false
+      )
       : session_config_(std::move(session_config)),
         preface_(std::move(preface)),
         prompt_template_(std::move(prompt_template)),
@@ -311,7 +314,8 @@ class ConversationConfig {
             filter_channel_content_from_kv_cache),
         return_error_on_parse_failure_(return_error_on_parse_failure),
         return_error_on_max_tokens_reached_(return_error_on_max_tokens_reached),
-        enable_thinking_(enable_thinking) {}
+        enable_thinking_(enable_thinking)
+  {}
 
   SessionConfig session_config_;
   Preface preface_;

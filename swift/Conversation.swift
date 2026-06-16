@@ -186,14 +186,15 @@ public class Conversation {
   /// - Parameter message: The message to send.
   /// - Parameter extraContext: The extra context to send to the model.
   /// - Returns: An async throwing stream of `Message` chunks.
-  public func sendMessageStream(_ message: Message, extraContext: [String: Any]? = nil)
-    -> AsyncThrowingStream<Message, Error>
-  {
+  public func sendMessageStream(
+    _ message: Message, extraContext: [String: Any]? = nil
+  ) -> AsyncThrowingStream<Message, Error> {
     return AsyncThrowingStream { continuation in
       do {
         let handle = try self.checkIsAlive()
         let messageJson: [String: Any] = message.toJson
-        let context = StreamContext(continuation: continuation, conversation: self)
+        let context = StreamContext(
+          continuation: continuation, conversation: self)
 
         try self.sendToStream(
           handle: handle, messageJson: messageJson, extraContext: extraContext, context: context)
@@ -390,8 +391,10 @@ public class Conversation {
     var toolCallCount: Int = 0
     var pendingToolCalls: [[String: Any]] = []
 
-    init(continuation: AsyncThrowingStream<Message, Error>.Continuation, conversation: Conversation)
-    {
+    init(
+      continuation: AsyncThrowingStream<Message, Error>.Continuation,
+      conversation: Conversation
+    ) {
       self.continuation = continuation
       self.conversation = conversation
     }

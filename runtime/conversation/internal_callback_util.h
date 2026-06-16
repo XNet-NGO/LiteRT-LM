@@ -47,7 +47,8 @@ absl::AnyInvocable<void(absl::StatusOr<Responses>)> CreateInternalCallback(
     absl::AnyInvocable<void()> cancel_callback = nullptr,
     absl::AnyInvocable<void(Message)> complete_message_callback = nullptr,
     const std::optional<std::string>& open_channel_name = std::nullopt,
-    bool return_error_on_max_tokens_reached = false);
+    bool return_error_on_max_tokens_reached = false
+);
 
 }  // namespace litert::lm
 

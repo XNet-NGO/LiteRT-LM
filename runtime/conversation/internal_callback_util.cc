@@ -246,7 +246,8 @@ absl::AnyInvocable<void(absl::StatusOr<Responses>)> CreateInternalCallback(
     absl::AnyInvocable<void()> cancel_callback,
     absl::AnyInvocable<void(Message)> complete_message_callback,
     const std::optional<std::string>& open_channel_name,
-    bool return_error_on_max_tokens_reached) {
+    bool return_error_on_max_tokens_reached
+) {
   auto channels = GetChannels(model_data_processor, custom_channels);
 
   bool initial_inside_channel = false;
@@ -276,8 +277,8 @@ absl::AnyInvocable<void(absl::StatusOr<Responses>)> CreateInternalCallback(
           active_channel_start_pos = size_t(0),
           active_channel_start_size = size_t(0),
           active_channel_name = std::move(initial_active_channel_name),
-          open_channel_name,
-          return_error_on_max_tokens_reached](absl::StatusOr<Responses> responses) mutable {
+          open_channel_name, return_error_on_max_tokens_reached
+          ](absl::StatusOr<Responses> responses) mutable {
     if (!responses.ok()) {
       // If the error is due to cancellation, then we should trigger the cancel
       // callback for removing the last message from the history.
