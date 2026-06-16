@@ -534,6 +534,7 @@ class AbstractBenchmark(abc.ABC):
   max_num_tokens: int | None = None
   cache_dir: str = ""
   enable_speculative_decoding: bool | None = None
+  prompt: str = "How are you"
 
   @abc.abstractmethod
   def run(self) -> BenchmarkInfo:

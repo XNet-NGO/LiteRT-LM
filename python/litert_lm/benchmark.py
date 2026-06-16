@@ -80,7 +80,7 @@ class Benchmark(interfaces.AbstractBenchmark):
           f"Failed to create session for benchmark (model_path={model_path})"
       )
 
-    dummy_prompt = b"benchmark"
+    dummy_prompt = self.prompt.encode("utf-8")
     input_data = LiteRtLmInputData()
     input_data.type = InputDataType.TEXT
     input_data.data = ctypes.cast(
