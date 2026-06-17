@@ -58,6 +58,7 @@ jobs:
             --deleted_packages=swift \
             --define=litert_link_capi_so=true \
             --define=resolve_symbols_in_exec=false \
+            --define=xnn_enable_avxvnniint8=false \
             -c opt \
             //runtime/engine:litert_lm_main \
             //runtime/...
