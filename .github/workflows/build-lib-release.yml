@@ -1,14 +1,21 @@
-name: Build and Release LiteRT Library
+name: Build and Release LiteRT-LM C Library
 
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
         description: 'Release version tag (e.g., v0.1.0)'
         required: false
         default: ''
+      create_release:
+        description: 'Create a GitHub release'
+        required: true
+        default: 'false'
+        type: boolean
 
 jobs:
   build:
@@ -16,36 +23,173 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Install Bazel
-        uses: bazel-build/setup@v1
-      
-      - name: Build liblitertlm.so
+
+      - name: Install system dependencies
         run: |
-          # Try multiple possible targets
-          bazel build //litert/lm/c:litertlm //litert/c:litertlm //:litertlm || true
-          # Find any .so files built
-          find bazel-bin -name "*.so*" -type f
-      
-      - name: Prepare release assets
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            lld \
+            pkg-config \
+            curl \
+            wget \
+            git \
+            git-lfs
+
+      - name: Install Bazel via apt
         run: |
+          # Install Bazelisk which automatically uses the correct Bazel version from .bazelversion
+          sudo apt-get install -y bazelisk || {
+            # Fallback: Install from GitHub releases if apt fails
+            BAZELISK_VERSION="v1.21.0"
+            wget -q "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64" -O /tmp/bazelisk
+            chmod +x /tmp/bazelisk
+            sudo mv /tmp/bazelisk /usr/local/bin/bazel
+          }
+          bazel --version
+
+      - name: Configure Bazel for Linux
+        run: |
+          # Verify Bazel version
+          bazel --version
+          
+          # Set up clang environment
+          export CC=clang
+          export CXX=clang++
+
+      - name: Build LiteRT-LM C library (liblitert-lm.so)
+        run: |
+          echo "Building LiteRT-LM C API shared library..."
+          
+          # Build the C API shared library
+          # Target: //c:litert-lm (defined in c/BUILD as a cc_binary with linkshared=1)
+          bazel build //c:litert-lm \
+            --config=linux \
+            --action_env=CC=clang \
+            --action_env=CXX=clang++ \
+            --verbose_failures
+          
+      - name: Build with CPU-only variant
+        run: |
+          echo "Building CPU-only variant..."
+          bazel build //c:engine_cpu \
+            --config=linux \
+            --action_env=CC=clang \
+            --action_env=CXX=clang++ \
+            --verbose_failures || echo "CPU-only build not critical, continuing..."
+
+      - name: Collect shared libraries
+        run: |
+          echo "Searching for built .so files..."
           mkdir -p release
-          find bazel-bin -name "*.so*" -type f -exec cp {} release/ \; || true
+          
+          # Find all .so files in bazel-bin
+          find bazel-bin -name "*.so*" -type f 2>/dev/null || true
+          find bazel-bin -name "*.so" -type f -exec cp -v {} release/ \; 2>/dev/null || true
+          
+          # Also check for the specific library target
+          if [ -f "bazel-bin/c/litert-lm.so" ]; then
+            cp -v bazel-bin/c/litert-lm.so release/liblitert-lm.so
+          fi
+          
+          # List what we collected
+          echo "Collected files:"
           ls -la release/ || echo "No .so files found"
-      
+          
+      - name: Create distribution package
+        run: |
+          cd release
+          
+          # Create checksums
+          sha256sum *.so > checksums.txt 2>/dev/null || true
+          
+          # Create a simple README
+          cat > README.md << 'EOF'
+          # LiteRT-LM C Library
+
+          This package contains the LiteRT-LM C API shared library.
+
+          ## Usage
+
+          ```c
+          #include "c/engine.h"
+          
+          // Initialize engine
+          LiteRtLmEngine* engine;
+          LiteRtLmEngineCreate(&engine);
+          
+          // Use engine...
+          
+          // Cleanup
+          LiteRtLmEngineDestroy(engine);
+          ```
+
+          ## License
+
+          Apache License 2.0
+          EOF
+          
+          # Package everything
+          tar -czvf liblitert-lm-linux-x86_64.tar.gz README.md checksums.txt *.so 2>/dev/null || \
+            tar -czvf liblitert-lm-linux-x86_64.tar.gz README.md *.so 2>/dev/null || \
+            echo "No files to package"
+          
+          ls -la
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: liblitertlm-linux
-          path: release/*
-      
-      - name: Create release
-        if: github.event.inputs.version != ''
-        uses: softprops/action-gh-release@v1
+          name: liblitert-lm-linux-x86_64
+          path: |
+            release/*.so
+            release/*.tar.gz
+            release/checksums.txt
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            # Generate version based on date and short SHA
+            VERSION="v$(date +%Y.%m.%d)-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: Create GitHub Release
+        if: github.event.inputs.create_release == 'true' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          files: release/*
+          tag_name: ${{ steps.version.outputs.version }}
+          name: LiteRT-LM C Library ${{ steps.version.outputs.version }}
+          body: |
+            ## LiteRT-LM C Library ${{ steps.version.outputs.version }}
+            
+            ### Changes
+            - Automated build from commit ${{ github.sha }}
+            
+            ### Artifacts
+            - `liblitert-lm-linux-x86_64.tar.gz` - Pre-built shared library for Linux x86_64
+            
+            ### Usage
+            Download and extract the archive, then link against `liblitert-lm.so`:
+            ```bash
+            tar -xzf liblitert-lm-linux-x86_64.tar.gz
+            export LD_LIBRARY_PATH=$PWD:$LD_LIBRARY_PATH
+            ```
+          files: |
+            release/*.tar.gz
+            release/*.so
+            release/checksums.txt
+          draft: false
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
