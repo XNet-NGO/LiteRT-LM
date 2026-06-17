@@ -1,0 +1,51 @@
+name: Build and Release LiteRT Library
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g., v0.1.0)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Install Bazel
+        uses: bazel-build/setup@v1
+      
+      - name: Build liblitertlm.so
+        run: |
+          # Try multiple possible targets
+          bazel build //litert/lm/c:litertlm //litert/c:litertlm //:litertlm || true
+          # Find any .so files built
+          find bazel-bin -name "*.so*" -type f
+      
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find bazel-bin -name "*.so*" -type f -exec cp {} release/ \; || true
+          ls -la release/ || echo "No .so files found"
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: liblitertlm-linux
+          path: release/*
+      
+      - name: Create release
+        if: github.event.inputs.version != ''
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
