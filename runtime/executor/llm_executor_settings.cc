@@ -51,7 +51,7 @@ std::ostream& operator<<(std::ostream& os, const GpuArtisanConfig& config) {
 }
 
 std::ostream& operator<<(std::ostream& os, const GpuConfig& config) {
-  os << "max_top_k: " << config.max_top_k << "\n";
+  os << "external_tensor_mode: " << config.external_tensor_mode << "\n";
   return os;
 }
 
@@ -71,7 +71,6 @@ std::ostream& operator<<(std::ostream& os, const NpuConfig& config) {
   os << "enable_npu_debug_logging: " << config.enable_npu_debug_logging << "\n";
   return os;
 }
-
 
 std::ostream& operator<<(std::ostream& os, const AdvancedSettings& settings) {
   os << "prefill_batch_sizes: ["
@@ -174,8 +173,6 @@ absl::StatusOr<LlmExecutorSettings> LlmExecutorSettings::CreateDefault(
     settings.SetBackendConfig(config);
   } else if (backend == Backend::GPU) {
     GpuConfig config;
-    // Default max top k to 1 for GPU.
-    config.max_top_k = 1;
     settings.SetBackendConfig(config);
   } else if (backend == Backend::NPU) {
     settings.SetBackendConfig(NpuConfig());
