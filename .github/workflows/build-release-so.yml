@@ -167,6 +167,8 @@ jobs:
 
       - name: Setup Android SDK
         run: |
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_HOME=/opt/android-sdk
           sudo mkdir -p $ANDROID_HOME/cmdline-tools
           wget -qO /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
@@ -179,6 +181,7 @@ jobs:
             "build-tools;33.0.1" "build-tools;34.0.0" > /dev/null
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
