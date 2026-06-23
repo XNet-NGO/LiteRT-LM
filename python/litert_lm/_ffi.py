@@ -87,6 +87,25 @@ class LogSeverity(enum.IntEnum):
   SILENT = 1000
 
 
+class ActivationDataType(enum.IntEnum):
+  """Activation data type for inference."""
+
+  FLOAT32 = 0
+  FLOAT16 = 1
+  INT16 = 2
+  INT8 = 3
+
+  @classmethod
+  def from_str(cls, val: str) -> ActivationDataType | None:
+    mapping = {
+        "fp32": cls.FLOAT32,
+        "fp16": cls.FLOAT16,
+        "int16": cls.INT16,
+        "int8": cls.INT8,
+    }
+    return mapping.get(val.lower())
+
+
 _LIB: ctypes.CDLL | None = None
 
 
@@ -165,6 +184,10 @@ def _setup_lib_signatures(lib):
   lib.litert_lm_engine_settings_set_enable_speculative_decoding.argtypes = [
       ctypes.c_void_p,
       ctypes.c_bool,
+  ]
+  lib.litert_lm_engine_settings_set_activation_data_type.argtypes = [
+      ctypes.c_void_p,
+      ctypes.c_int,
   ]
   lib.litert_lm_engine_settings_set_lora_rank.argtypes = [
       ctypes.c_void_p,

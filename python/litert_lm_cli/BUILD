@@ -209,6 +209,7 @@ py_test(
         ":common",
         ":main_lib",
         ":model",
+        "//python/litert_lm",
         "//python/litert_lm_cli/commands:run",
         "@absl_py//absl/testing:absltest",
         requirement("click"),
